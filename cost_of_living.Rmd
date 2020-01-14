@@ -1,7 +1,6 @@
 ---
 title: "Cost of Living: Numbeo"
-author: "Pratik"
-date: "10/01/2020"
+author: "JediPro"
 output: html_document
 ---
 
@@ -26,8 +25,7 @@ library(rlist)
 
 # Set working directory
 setwd("C:\\The Rest\\Datasets\\cost_of_living\\")
-# Set Google Maps API Key
-register_google(key = "AIzaSyBx3bXmdQkBQBqYPIFOyVHZfRQ3WWB3nzw")
+
 ```
 
 ## Scrape data
