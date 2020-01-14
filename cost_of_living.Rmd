@@ -1,0 +1,230 @@
+---
+title: "Cost of Living: Numbeo"
+author: "Pratik"
+date: "10/01/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = F, warning = F, fig.width = 12, fig.width = 12,
+                      echo = T, eval = T)
+options(warn = 1)
+```
+
+## Set environment
+```{r}
+# Load libraries
+library(dplyr)
+library(tidyverse)
+library(rvest)
+library(ggplot2)
+library(purrr)
+library(ggmap)
+library(stringr)
+library(zoo)
+library(rlist)
+
+# Set working directory
+setwd("C:\\The Rest\\Datasets\\cost_of_living\\")
+# Set Google Maps API Key
+register_google(key = "AIzaSyBx3bXmdQkBQBqYPIFOyVHZfRQ3WWB3nzw")
+```
+
+## Scrape data
+Check Real estate websites for flat listings
+
+### Scrape Numbeo landing page for list of countries
+```{r}
+# Store landing page info
+numbeo_lp_url <- "https://www.numbeo.com/cost-of-living/"
+# Get list of countries
+country_list <- tryCatch(expr = {
+  numbeo_lp_url %>% 
+    # Read html
+    read_html() %>%
+    # Get info corresponding to country list dropdown
+    html_nodes(xpath = "//form/b/select[@id='country']") %>% 
+    # Extract first eleement
+    `[[`(1) %>% 
+    # Get list of all children
+    html_children() %>% 
+    # Get value of each option
+    map(html_text) %>% 
+    # Convert to vector
+    unlist() %>% 
+    # Convert to data frame
+    tbl_df() %>% 
+    # Rename column
+    rename(country = value) %>% 
+    # Keep only country names
+    filter(!grepl(pattern = "select", x = country, ignore.case = T)) %>% 
+    # Replace spaces by '+' signs
+    mutate(country = gsub(pattern = " ", replacement = "+", x = .$country))
+},
+error = function(e){
+  message("Country list could not be scraped")
+  stop()
+})
+```
+
+### Scrape cost tables for each country in INR
+```{r}
+# Define function to scrape and clean data
+scrape_country_cost_data <- function(country_name){
+  
+  # # testing
+  # country_name <- country_list$country[86]
+  
+  # Store base url
+  numbeo_lp_url <- "https://www.numbeo.com/cost-of-living/"
+  
+  # Form url
+  country_url <- paste(numbeo_lp_url, "country_result.jsp?country=", 
+                       country_name, "&displayCurrency=INR", sep = "")
+  
+  # Scrape data
+  data_country <- tryCatch(expr = {
+    # Use url just defined
+    country_url %>% 
+      # Read html page
+      read_html() %>% 
+      # get table at specified node
+      html_nodes(xpath = "//table[@class='data_wide_table']") %>% 
+      # Extract html table
+      html_table(header = F) %>% 
+      # Extract data frame from node
+      `[[`(1)
+  },
+  error = function(e){
+    next()
+  })
+  
+  # Clean data
+  data_clean <- data_country %>% 
+    # Rename columns. Constant across countries hence cna do this
+    rename(item = X1, median_price = X2, price_range = X3) %>% 
+    # Replace character elements in price columns
+    mutate(median_price = gsub(pattern = ",|₹", 
+                               replacement = "", 
+                               x = median_price),
+           price_range = gsub(pattern = ",", 
+                              replacement = "", 
+                              x = price_range)) %>%
+    # Trim whitespaces. Non breaking spaces present, hence whitespace argument
+    mutate(median_price = trimws(median_price, 
+                                 whitespace = "[\\h\\v]"),
+           price_range = trimws(price_range, 
+                                whitespace = "[\\h\\v]")) %>% 
+    # COnvert price column to numeric
+    mutate(median_price = as.numeric(median_price)) %>% 
+    # Separate range column into min and max price
+    separate(col = price_range, 
+             into = c("min_price", "max_price"), 
+             sep = "-", 
+             remove = T, 
+             extra = "merge") %>% 
+    # Convert min and max price to numeric
+    mutate(min_price = as.numeric(min_price),
+           max_price = as.numeric(max_price)) %>% 
+    # Create a category column using section headers in table
+    mutate(item_category = ifelse(test = is.na(median_price), 
+                                  yes = item, no = NA)) %>% 
+    # Fill NAs with preceding value
+    mutate(item_category = na.locf(item_category)) %>% 
+    # Remove section header rows
+    filter(!is.na(median_price)) %>% 
+    # Add a country identifier column
+    mutate(country = country_name)
+  
+  # Print current country
+  cat("Data scraped for", country_name, "\n")
+  
+  # Return data
+  return(data_clean)
+}
+
+# Iterate over all countries in list
+data_country_cost <- country_list %>% 
+  # Select column
+  select(country) %>% 
+  # convert to vector
+  unlist() %>% 
+  # Map scrpaing function to each country name
+  map_dfr(.f = scrape_country_cost_data)
+```
+
+### Scrape city wise cost index tables for all countries
+```{r}
+# Define function to scrape and clean data
+scrape_country_index_data <- function(country_name){
+  
+  # # testing
+  # country_name <- country_list$country[86]
+  
+  # Store base url
+  numbeo_lp_url <- "https://www.numbeo.com/cost-of-living/"
+  
+  # Form url
+  country_url <- paste(numbeo_lp_url, "country_result.jsp?country=", 
+                       country_name, "&displayCurrency=INR", sep = "")
+  
+  # Scrape data
+  data_country <- tryCatch(expr = {
+    # Use url just defined
+    country_url %>% 
+      # Read html page
+      read_html() %>% 
+      # get table at specified node
+      html_nodes(xpath = "//table[@id='t2']") %>% 
+      # Extract html table
+      html_table(header = T) %>% 
+      # Extract data frame from node
+      `[[`(1)
+  },
+  error = function(e){
+    message("Data not scraped for ", country_name)
+  })
+  
+  # Clean data
+  data_clean <- data_country %>% 
+    # Remove uneanted columns
+    select(-one_of("Rank")) %>% 
+    # Rename columns. Constant across countries hence cna do this
+    rename(city = City, 
+           index_cost_of_living = `Cost of Living Index`, 
+           index_rent = `Rent Index`,
+           index_living_rent = `Cost of Living Plus Rent Index`,
+           index_grocery = `Groceries Index`,
+           index_restaurant = `Restaurant Price Index`,
+           index_pp = "Local Purchasing Power Index") %>% 
+    # Add column for country identification
+    mutate(country = country_name)
+  
+  # Print current country
+  cat("Data scraped for", country_name, "\n")
+  
+  # Return data
+  return(data_clean)
+}
+
+# Iterate over all countries in list
+data_country_index <- country_list %>% 
+  # Select column
+  select(country) %>% 
+  # convert to vector
+  unlist() %>% 
+  # Map scrpaing function to each country name
+  map(.f = possibly(scrape_country_index_data, otherwise = NA))
+# Remove NA elements
+data_country_index <- data_country_index[!is.na(data_country_index)]
+# bind rows
+data_country_index <- bind_rows(data_country_index)
+```
+
+### Save data
+```{r}
+write.csv(x = data_country_cost, file = "data_country_cost.csv", row.names = F)
+write.csv(x = data_country_index, file = "data_country_index.csv", row.names = F)
+```
+
+
